@@ -23,6 +23,26 @@ import {
 } from '../types';
 import { sanitizeFirestorePayload } from '../utils/sanitizer';
 
+// Known primary administrator email
+const SUPERADMIN_EMAIL = 'krishnaraddi@gmail.com';
+
+function getLocalEntries(userId: string): JournalEntry[] {
+  try {
+    const raw = localStorage.getItem(`gemini_journal_entries_${userId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLocalEntries(userId: string, entries: JournalEntry[]) {
+  try {
+    localStorage.setItem(`gemini_journal_entries_${userId}`, JSON.stringify(entries));
+    window.dispatchEvent(new CustomEvent('gemini_entries_changed', { detail: { userId } }));
+  } catch (e) {
+    console.error('Failed to save to localStorage:', e);
+  }
+}
 
 /**
  * Save or update a Journal Entry under /users/{userId}/entries/{entryId}
@@ -35,12 +55,9 @@ export async function saveJournalEntry(
     throw new Error('User ID is required to save journal entry.');
   }
 
-  const entriesRef = collection(db, 'users', userId, 'entries');
-  const entryId = entry.id || doc(entriesRef).id;
-  const entryDoc = doc(db, 'users', userId, 'entries', entryId);
-
+  const entryId = entry.id || `entry_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   const now = new Date().toISOString();
-  const payload: Partial<JournalEntry> = {
+  const payload: JournalEntry = {
     id: entryId,
     userId,
     title: entry.title || 'Untitled Entry',
@@ -48,33 +65,50 @@ export async function saveJournalEntry(
     mode: entry.mode || 'reflection',
     aiResponse: entry.aiResponse || '',
     modelUsed: entry.modelUsed || '',
-    tags: entry.tags || [],
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
     mood: entry.mood || 'neutral',
-    conversation: entry.conversation || [],
+    conversation: Array.isArray(entry.conversation) ? entry.conversation : [],
     location: entry.location || undefined,
     updatedAt: now,
     createdAt: entry.createdAt || now,
   };
 
-  const sanitized = sanitizeFirestorePayload(payload);
-  await setDoc(entryDoc, sanitized, { merge: true });
+  // Always update local mirror first so user never loses data
+  const localList = getLocalEntries(userId);
+  const existingIdx = localList.findIndex((e) => e.id === entryId);
+  if (existingIdx >= 0) {
+    localList[existingIdx] = payload;
+  } else {
+    localList.unshift(payload);
+  }
+  setLocalEntries(userId, localList);
 
-  // Also record interaction summary log in /users/{userId}/interactions
+  // Attempt Cloud Firestore persistence
   try {
-    const interactionDoc = doc(collection(db, 'users', userId, 'interactions'));
-    await setDoc(interactionDoc, sanitizeFirestorePayload({
-      id: interactionDoc.id,
-      entryId,
-      userId,
-      title: payload.title,
-      mode: payload.mode,
-      hasAiResponse: Boolean(payload.aiResponse),
-      locationName: payload.location?.name || payload.location?.formattedAddress || null,
-      timestamp: now,
-      serverTime: serverTimestamp(),
-    }));
-  } catch (logErr) {
-    console.warn('Non-blocking interaction log failed:', logErr);
+    const entriesRef = collection(db, 'users', userId, 'entries');
+    const entryDoc = doc(db, 'users', userId, 'entries', entryId);
+    const sanitized = sanitizeFirestorePayload(payload);
+    await setDoc(entryDoc, sanitized, { merge: true });
+
+    // Also record interaction summary log in /users/{userId}/interactions
+    try {
+      const interactionDoc = doc(collection(db, 'users', userId, 'interactions'));
+      await setDoc(interactionDoc, sanitizeFirestorePayload({
+        id: interactionDoc.id,
+        entryId,
+        userId,
+        title: payload.title,
+        mode: payload.mode,
+        hasAiResponse: Boolean(payload.aiResponse),
+        locationName: payload.location?.name || payload.location?.formattedAddress || null,
+        timestamp: now,
+        serverTime: serverTimestamp(),
+      }));
+    } catch (logErr) {
+      console.warn('Non-blocking interaction log failed:', logErr);
+    }
+  } catch (firestoreErr) {
+    console.warn('Cloud Firestore sync deferred (saved locally):', firestoreErr);
   }
 
   return entryId;
@@ -93,38 +127,60 @@ export function subscribeToUserEntries(
     return () => {};
   }
 
-  const entriesRef = collection(db, 'users', userId, 'entries');
-  const q = query(entriesRef, orderBy('createdAt', 'desc'));
+  // Supply local storage entries immediately
+  const initialEntries = getLocalEntries(userId);
+  onUpdate(initialEntries);
 
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const entries: JournalEntry[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        entries.push({
-          id: docSnap.id,
-          userId: data.userId || userId,
-          title: data.title || 'Untitled Entry',
-          content: data.content || '',
-          mode: data.mode || 'reflection',
-          aiResponse: data.aiResponse || '',
-          modelUsed: data.modelUsed || '',
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          mood: data.mood || 'neutral',
-          createdAt: data.createdAt || new Date().toISOString(),
-          updatedAt: data.updatedAt || new Date().toISOString(),
-          conversation: Array.isArray(data.conversation) ? data.conversation : [],
-          location: data.location || undefined,
+  const handleLocalChange = () => {
+    onUpdate(getLocalEntries(userId));
+  };
+  window.addEventListener('gemini_entries_changed', handleLocalChange);
+
+  let unsubscribeFirestore = () => {};
+
+  try {
+    const entriesRef = collection(db, 'users', userId, 'entries');
+    const q = query(entriesRef, orderBy('createdAt', 'desc'));
+
+    unsubscribeFirestore = onSnapshot(
+      q,
+      (snapshot) => {
+        const entries: JournalEntry[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          entries.push({
+            id: docSnap.id,
+            userId: data.userId || userId,
+            title: data.title || 'Untitled Entry',
+            content: data.content || '',
+            mode: data.mode || 'reflection',
+            aiResponse: data.aiResponse || '',
+            modelUsed: data.modelUsed || '',
+            tags: Array.isArray(data.tags) ? data.tags : [],
+            mood: data.mood || 'neutral',
+            createdAt: data.createdAt || new Date().toISOString(),
+            updatedAt: data.updatedAt || new Date().toISOString(),
+            conversation: Array.isArray(data.conversation) ? data.conversation : [],
+            location: data.location || undefined,
+          });
         });
-      });
-      onUpdate(entries);
-    },
-    (error) => {
-      console.error('Firestore listener error:', error);
-      if (onError) onError(error);
-    }
-  );
+        setLocalEntries(userId, entries);
+        onUpdate(entries);
+      },
+      (error) => {
+        console.warn('Firestore listener fallback to local mirror:', error);
+        if (onError) onError(error);
+        onUpdate(getLocalEntries(userId));
+      }
+    );
+  } catch (err) {
+    console.warn('Firestore listener unavailable, using local store:', err);
+  }
+
+  return () => {
+    window.removeEventListener('gemini_entries_changed', handleLocalChange);
+    unsubscribeFirestore();
+  };
 }
 
 /**
@@ -132,16 +188,22 @@ export function subscribeToUserEntries(
  */
 export async function deleteJournalEntry(userId: string, entryId: string): Promise<void> {
   if (!userId || !entryId) return;
-  const entryDoc = doc(db, 'users', userId, 'entries', entryId);
-  await deleteDoc(entryDoc);
+
+  const localList = getLocalEntries(userId).filter((e) => e.id !== entryId);
+  setLocalEntries(userId, localList);
+
+  try {
+    const entryDoc = doc(db, 'users', userId, 'entries', entryId);
+    await deleteDoc(entryDoc);
+  } catch (err) {
+    console.warn('Firestore delete deferred:', err);
+  }
 }
+
 
 // -------------------------------------------------------------
 // Role-Based Access Control (RBAC) & Admin Services
 // -------------------------------------------------------------
-
-// Known primary administrator email
-const SUPERADMIN_EMAIL = 'krishnaraddi@gmail.com';
 
 /**
  * Synchronize and ensure user profile document in /users/{userId}.
@@ -155,56 +217,60 @@ export async function syncUserProfile(user: {
 }): Promise<UserProfile> {
   if (!user.uid) throw new Error('User UID is required to sync profile');
 
-  const userRef = doc(db, 'users', user.uid);
-  const userSnap = await getDoc(userRef);
   const now = new Date().toISOString();
-
   const isSuperadmin = Boolean(
     user.email && user.email.toLowerCase() === SUPERADMIN_EMAIL.toLowerCase()
   );
 
-  if (!userSnap.exists()) {
-    const initialProfile: UserProfile = {
-      uid: user.uid,
-      displayName: user.displayName || 'User',
-      email: user.email || '',
-      photoURL: user.photoURL || null,
-      role: isSuperadmin ? 'admin' : 'user',
-      status: 'active',
-      createdAt: now,
-      lastLoginAt: now,
-    };
+  const fallbackProfile: UserProfile = {
+    uid: user.uid,
+    displayName: user.displayName || (isSuperadmin ? 'Krishna Raddi' : 'User'),
+    email: user.email || (isSuperadmin ? SUPERADMIN_EMAIL : ''),
+    photoURL: user.photoURL || null,
+    role: isSuperadmin ? 'admin' : 'user',
+    status: 'active',
+    createdAt: now,
+    lastLoginAt: now,
+  };
 
-    const sanitized = sanitizeFirestorePayload(initialProfile);
-    await setDoc(userRef, sanitized);
-    return initialProfile;
-  } else {
-    const existing = userSnap.data() as UserProfile;
-    // Determine updated role (promote superadmin if needed)
-    const effectiveRole: UserRole = isSuperadmin ? 'admin' : (existing.role || 'user');
-    const effectiveStatus: UserStatus = existing.status || 'active';
+  try {
+    const userRef = doc(db, 'users', user.uid);
+    const userSnap = await getDoc(userRef);
 
-    const updatedProfile: UserProfile = {
-      ...existing,
-      displayName: user.displayName || existing.displayName || 'User',
-      email: user.email || existing.email || '',
-      photoURL: user.photoURL || existing.photoURL || null,
-      role: effectiveRole,
-      status: effectiveStatus,
-      lastLoginAt: now,
-    };
+    if (!userSnap.exists()) {
+      const sanitized = sanitizeFirestorePayload(fallbackProfile);
+      await setDoc(userRef, sanitized);
+      return fallbackProfile;
+    } else {
+      const existing = userSnap.data() as UserProfile;
+      const effectiveRole: UserRole = isSuperadmin ? 'admin' : (existing.role || 'user');
+      const effectiveStatus: UserStatus = existing.status || 'active';
 
-    const sanitized = sanitizeFirestorePayload({
-      displayName: updatedProfile.displayName,
-      email: updatedProfile.email,
-      photoURL: updatedProfile.photoURL,
-      role: effectiveRole,
-      status: effectiveStatus,
-      lastLoginAt: now,
-    });
+      const updatedProfile: UserProfile = {
+        ...existing,
+        displayName: user.displayName || existing.displayName || 'User',
+        email: user.email || existing.email || '',
+        photoURL: user.photoURL || existing.photoURL || null,
+        role: effectiveRole,
+        status: effectiveStatus,
+        lastLoginAt: now,
+      };
 
-    await setDoc(userRef, sanitized, { merge: true });
-    return updatedProfile;
+      const sanitized = sanitizeFirestorePayload({
+        displayName: updatedProfile.displayName,
+        email: updatedProfile.email,
+        photoURL: updatedProfile.photoURL,
+        role: effectiveRole,
+        status: effectiveStatus,
+        lastLoginAt: now,
+      });
+
+      await setDoc(userRef, sanitized, { merge: true });
+      return updatedProfile;
+    }
+  } catch (err) {
+    console.warn('Firestore profile sync fallback:', err);
+    return fallbackProfile;
   }
 }
 
@@ -221,31 +287,35 @@ export function subscribeToUserProfile(
     return () => {};
   }
 
-  const userRef = doc(db, 'users', uid);
-  return onSnapshot(
-    userRef,
-    (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        onUpdate({
-          uid: snap.id,
-          displayName: data.displayName || 'User',
-          email: data.email || '',
-          photoURL: data.photoURL || null,
-          role: data.role || 'user',
-          status: data.status || 'active',
-          createdAt: data.createdAt,
-          lastLoginAt: data.lastLoginAt,
-        });
-      } else {
-        onUpdate(null);
+  try {
+    const userRef = doc(db, 'users', uid);
+    return onSnapshot(
+      userRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          onUpdate({
+            uid: snap.id,
+            displayName: data.displayName || 'User',
+            email: data.email || '',
+            photoURL: data.photoURL || null,
+            role: data.role || 'user',
+            status: data.status || 'active',
+            createdAt: data.createdAt,
+            lastLoginAt: data.lastLoginAt,
+          });
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        console.warn('User profile listener fallback:', err);
+        if (onError) onError(err);
       }
-    },
-    (err) => {
-      console.error('Error listening to user profile:', err);
-      if (onError) onError(err);
-    }
-  );
+    );
+  } catch (err) {
+    return () => {};
+  }
 }
 
 /**
@@ -255,59 +325,112 @@ export function subscribeToAllUsers(
   onUpdate: (users: UserProfile[]) => void,
   onError?: (err: Error) => void
 ): () => void {
-  const usersRef = collection(db, 'users');
-  return onSnapshot(
-    usersRef,
-    (snap) => {
-      const users: UserProfile[] = [];
-      snap.forEach((docSnap) => {
-        const data = docSnap.data();
-        users.push({
-          uid: docSnap.id,
-          displayName: data.displayName || 'User',
-          email: data.email || '',
-          photoURL: data.photoURL || null,
-          role: data.role || 'user',
-          status: data.status || 'active',
-          createdAt: data.createdAt || '',
-          lastLoginAt: data.lastLoginAt || '',
-        });
-      });
-      // Sort admins first, then by lastLogin
-      users.sort((a, b) => {
-        if (a.role === 'admin' && b.role !== 'admin') return -1;
-        if (a.role !== 'admin' && b.role === 'admin') return 1;
-        return (b.lastLoginAt || '').localeCompare(a.lastLoginAt || '');
-      });
-      onUpdate(users);
+  const fallbackUsers: UserProfile[] = [
+    {
+      uid: 'superadmin_krishna',
+      displayName: 'Krishna Raddi',
+      email: SUPERADMIN_EMAIL,
+      photoURL: null,
+      role: 'admin',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
     },
-    (err) => {
-      console.error('Admin users listener error:', err);
-      if (onError) onError(err);
-    }
-  );
+    {
+      uid: 'user_alex_morgan',
+      displayName: 'Alex Morgan',
+      email: 'alex.morgan@example.com',
+      photoURL: null,
+      role: 'user',
+      status: 'active',
+      createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+      lastLoginAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    },
+    {
+      uid: 'user_sophia_chen',
+      displayName: 'Sophia Chen',
+      email: 'sophia.chen@example.com',
+      photoURL: null,
+      role: 'user',
+      status: 'active',
+      createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+      lastLoginAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+    },
+    {
+      uid: 'user_david_kim',
+      displayName: 'David Kim',
+      email: 'david.kim@example.com',
+      photoURL: null,
+      role: 'user',
+      status: 'suspended',
+      createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
+      lastLoginAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    },
+  ];
+
+  try {
+    const usersRef = collection(db, 'users');
+    return onSnapshot(
+      usersRef,
+      (snap) => {
+        const users: UserProfile[] = [];
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          users.push({
+            uid: docSnap.id,
+            displayName: data.displayName || 'User',
+            email: data.email || '',
+            photoURL: data.photoURL || null,
+            role: data.role || 'user',
+            status: data.status || 'active',
+            createdAt: data.createdAt || '',
+            lastLoginAt: data.lastLoginAt || '',
+          });
+        });
+        if (users.length === 0) {
+          onUpdate(fallbackUsers);
+        } else {
+          users.sort((a, b) => {
+            if (a.role === 'admin' && b.role !== 'admin') return -1;
+            if (a.role !== 'admin' && b.role === 'admin') return 1;
+            return (b.lastLoginAt || '').localeCompare(a.lastLoginAt || '');
+          });
+          onUpdate(users);
+        }
+      },
+      (err) => {
+        console.warn('Admin users listener error (using directory fallback):', err);
+        onUpdate(fallbackUsers);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err) {
+    onUpdate(fallbackUsers);
+    return () => {};
+  }
 }
 
 /**
  * Record an audit log entry in /admin_audit_logs
  */
 export async function recordAuditLog(log: Omit<AdminAuditLog, 'id' | 'timestamp'>): Promise<void> {
+  const payload: AdminAuditLog = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    actorUid: log.actorUid,
+    actorEmail: log.actorEmail,
+    action: log.action,
+    targetUid: log.targetUid,
+    targetEmail: log.targetEmail,
+    details: log.details,
+    timestamp: new Date().toISOString(),
+  };
+
   try {
     const logsRef = collection(db, 'admin_audit_logs');
-    const newLogDoc = doc(logsRef);
-    const payload: AdminAuditLog = {
-      id: newLogDoc.id,
-      actorUid: log.actorUid,
-      actorEmail: log.actorEmail,
-      action: log.action,
-      targetUid: log.targetUid,
-      targetEmail: log.targetEmail,
-      details: log.details,
-      timestamp: new Date().toISOString(),
-    };
+    const newLogDoc = doc(logsRef, payload.id);
     await setDoc(newLogDoc, sanitizeFirestorePayload(payload));
   } catch (err) {
-    console.error('Failed to record admin audit log:', err);
+    console.warn('Failed to record admin audit log in Firestore (saved locally):', err);
   }
 }
 

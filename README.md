@@ -106,7 +106,7 @@ Enable the required Google Cloud APIs for Cloud Run, Secret Manager, and Firesto
 
 ```bash
 # Set your project ID
-export PROJECT_ID="YOUR_GCP_PROJECT_ID"
+export PROJECT_ID="apac-cohort3-504814"
 export REGION="asia-southeast1" # Or your preferred region (e.g. us-central1)
 gcloud config set project $PROJECT_ID
 
@@ -115,7 +115,8 @@ gcloud services enable \
   run.googleapis.com \
   secretmanager.googleapis.com \
   firestore.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com \
+  identitytoolkit.googleapis.com
 ```
 
 ---

@@ -1,12 +1,12 @@
 {
-  "projectId": "bitsom-pragunaarec",
-  "appId": "1:916102980173:web:f7d692e13dcbf925fd3204",
-  "apiKey": "AIzaSyBuK53oBm2l82mb1aLaRH1cCta1PFqlXRA",
-  "authDomain": "bitsom-pragunaarec.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-5822b6da-94ed-45b5-a64e-7822f835bf28",
-  "storageBucket": "bitsom-pragunaarec.firebasestorage.app",
-  "messagingSenderId": "916102980173",
+  "projectId": "apac-cohort3-504814",
+  "appId": "1:67175926230:web:5dd0ae3a47a3ea1322bc77",
+  "apiKey": "AIzaSyCRbRFUtET4qu_QQb48UZcAF7WCjwpklJ0",
+  "authDomain": "apac-cohort3-504814.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-geminijournalref-5822b6da-94ed-45b5-a64e-7822f835bf28",
+  "storageBucket": "apac-cohort3-504814.firebasestorage.app",
+  "messagingSenderId": "67175926230",
   "measurementId": "",
-  "oAuthClientId": "916102980173-ch7a63s72ofbdgbo3fi7lhs1q08cj66q.apps.googleusercontent.com",
+  "oAuthClientId": "67175926230-edjhs2th5iib730fpbkp2vkkf807nfbe.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

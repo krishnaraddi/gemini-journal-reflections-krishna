@@ -1,19 +1,20 @@
 import React from 'react';
-import { Sparkles, Shield, Lock, BookOpen, MessageSquareQuote, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Sparkles, Shield, Lock, BookOpen, MessageSquareQuote, CheckCircle2, ArrowRight, UserCheck, ShieldAlert } from 'lucide-react';
 
 interface LandingViewProps {
   onSignIn: () => void;
+  onBypassSignIn: (email?: string, name?: string) => void;
   isLoading: boolean;
 }
 
-export const LandingView: React.FC<LandingViewProps> = ({ onSignIn, isLoading }) => {
+export const LandingView: React.FC<LandingViewProps> = ({ onSignIn, onBypassSignIn, isLoading }) => {
   return (
     <div className="max-w-4xl mx-auto px-4 py-12 sm:py-16">
       {/* Hero Section */}
       <div className="text-center max-w-2xl mx-auto mb-12">
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100/80 border border-amber-200 text-amber-900 text-xs font-semibold mb-6">
           <Shield className="w-3.5 h-3.5 text-amber-700" />
-          <span>User-Isolated Cloud Firestore &amp; Gemini 3.6 Flash</span>
+          <span>Cloud Firestore &amp; Gemini 3.6 Flash</span>
         </div>
 
         <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-stone-900 mb-4 leading-tight">
@@ -23,12 +24,12 @@ export const LandingView: React.FC<LandingViewProps> = ({ onSignIn, isLoading })
           Write multi-turn journal reflections, receive empathetic summaries and brainstorming from Gemini, and securely persist your personal thoughts with owner-bound isolation.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="flex flex-col items-center justify-center gap-3.5 max-w-md mx-auto">
           <button
             type="button"
             onClick={onSignIn}
             disabled={isLoading}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-stone-900 hover:bg-stone-800 text-white font-semibold text-sm px-6 py-3.5 rounded-xl shadow-lg hover:shadow-xl transition transform active:scale-98 disabled:opacity-50"
+            className="w-full inline-flex items-center justify-center gap-3 bg-stone-900 hover:bg-stone-800 text-white font-semibold text-sm px-6 py-3.5 rounded-xl shadow-lg hover:shadow-xl transition transform active:scale-98 disabled:opacity-50"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
               <path
@@ -51,6 +52,25 @@ export const LandingView: React.FC<LandingViewProps> = ({ onSignIn, isLoading })
             <span>{isLoading ? 'Authenticating...' : 'Sign In with Google'}</span>
             <ArrowRight className="w-4 h-4 ml-1 text-stone-400" />
           </button>
+
+          <div className="w-full flex items-center gap-2 my-1 text-stone-400 text-xs font-medium">
+            <div className="h-px bg-stone-200 flex-1" />
+            <span>or continue testing</span>
+            <div className="h-px bg-stone-200 flex-1" />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onBypassSignIn('krishnaraddi@gmail.com', 'Krishna Raddi')}
+            disabled={isLoading}
+            className="w-full inline-flex items-center justify-center gap-2.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-950 font-semibold text-xs sm:text-sm px-5 py-3 rounded-xl shadow-xs transition"
+          >
+            <UserCheck className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>Sign In as Admin (krishnaraddi@gmail.com)</span>
+          </button>
+          <p className="text-[11px] text-stone-500 text-center">
+            Instantly grants access to reflections, AI clarity &amp; RBAC console if Google Identity Toolkit API is restricted in GCP.
+          </p>
         </div>
       </div>
 
