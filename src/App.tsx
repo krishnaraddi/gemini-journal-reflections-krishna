@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { listenToAuthState, signInWithGoogle, signOutUser } from './firebase';
+import { syncUserProfile, subscribeToUserProfile } from './services/firestoreService';
 import { UserProfile } from './types';
 import { LandingView } from './components/LandingView';
 import { Dashboard } from './components/Dashboard';
 import { Navbar } from './components/Navbar';
 import { ToastContainer, ToastMessage } from './components/Toast';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, ShieldAlert, LogOut } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -27,21 +28,52 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = listenToAuthState((firebaseUser) => {
+    let profileUnsub: (() => void) | null = null;
+
+    const unsubscribe = listenToAuthState(async (firebaseUser) => {
       if (firebaseUser) {
-        setUser({
-          uid: firebaseUser.uid,
-          displayName: firebaseUser.displayName,
-          email: firebaseUser.email,
-          photoURL: firebaseUser.photoURL,
-        });
+        try {
+          // Sync profile document and establish RBAC role
+          const syncedProfile = await syncUserProfile({
+            uid: firebaseUser.uid,
+            displayName: firebaseUser.displayName,
+            email: firebaseUser.email,
+            photoURL: firebaseUser.photoURL,
+          });
+          setUser(syncedProfile);
+
+          // Listen to realtime role & status updates (e.g. if promoted by another admin)
+          if (profileUnsub) profileUnsub();
+          profileUnsub = subscribeToUserProfile(firebaseUser.uid, (updatedProfile) => {
+            if (updatedProfile) {
+              setUser(updatedProfile);
+            }
+          });
+        } catch (err) {
+          console.error('Failed to sync user profile:', err);
+          setUser({
+            uid: firebaseUser.uid,
+            displayName: firebaseUser.displayName,
+            email: firebaseUser.email,
+            photoURL: firebaseUser.photoURL,
+            role: 'user',
+            status: 'active',
+          });
+        }
       } else {
+        if (profileUnsub) {
+          profileUnsub();
+          profileUnsub = null;
+        }
         setUser(null);
       }
       setAuthLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (profileUnsub) profileUnsub();
+    };
   }, []);
 
   const handleGoogleSignIn = async () => {
@@ -49,16 +81,16 @@ export default function App() {
     setAuthError(null);
     try {
       const loggedUser = await signInWithGoogle();
-      setUser({
+      const profile = await syncUserProfile({
         uid: loggedUser.uid,
         displayName: loggedUser.displayName,
         email: loggedUser.email,
         photoURL: loggedUser.photoURL,
       });
-      addToast('success', `Welcome, ${loggedUser.displayName || 'Friend'}!`);
+      setUser(profile);
+      addToast('success', `Welcome, ${profile.displayName || 'Friend'}! Role: ${profile.role?.toUpperCase() || 'USER'}`);
     } catch (err: any) {
       console.error('Google Sign In error:', err);
-      // Suppress popup closed by user errors with friendly notice
       if (err.code === 'auth/popup-closed-by-user') {
         addToast('info', 'Sign-in popup was closed.');
       } else {
@@ -87,7 +119,39 @@ export default function App() {
       <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mx-auto" />
-          <p className="text-stone-600 text-sm font-medium">Connecting to Firebase Auth...</p>
+          <p className="text-stone-600 text-sm font-medium">Authenticating & Verifying Role...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Account Suspended Barrier (OWASP A01 Access Control)
+  if (user && user.status === 'suspended') {
+    return (
+      <div className="min-h-screen bg-stone-900 text-stone-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-stone-800 border border-red-500/40 rounded-2xl p-6 text-center space-y-4 shadow-xl">
+          <div className="w-12 h-12 bg-red-950/80 border border-red-700/60 rounded-full flex items-center justify-center mx-auto text-red-400">
+            <ShieldAlert className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-red-300">Account Suspended</h2>
+            <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+              Your account access has been suspended by an administrator. Please contact your organization administrator to restore access.
+            </p>
+          </div>
+          <div className="bg-stone-900/60 p-3 rounded-lg border border-stone-700/50 text-[11px] text-stone-400 text-left font-mono">
+            <div>User: {user.email || user.uid}</div>
+            <div>Status: SUSPENDED</div>
+            <div>Policy: OWASP A01 Broken Access Control Enforcement</div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="w-full py-2.5 px-4 bg-stone-700 hover:bg-stone-600 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sign Out</span>
+          </button>
         </div>
       </div>
     );
@@ -123,7 +187,7 @@ export default function App() {
 
           <footer className="border-t border-stone-200 bg-white py-6 text-center text-xs text-stone-500">
             <div className="max-w-5xl mx-auto px-4">
-              <span>Google Firebase Auth • Isolated Cloud Firestore • Gemini 3.6 Flash</span>
+              <span>Google Firebase Auth • Isolated Cloud Firestore • Gemini 3.6 Flash • RBAC Security</span>
             </div>
           </footer>
 
@@ -133,3 +197,4 @@ export default function App() {
     </div>
   );
 }
+

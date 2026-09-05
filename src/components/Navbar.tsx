@@ -1,14 +1,15 @@
 import React from 'react';
-import { Sparkles, LogOut, ShieldCheck, User } from 'lucide-react';
+import { Sparkles, LogOut, ShieldCheck, User, MapPin, Shield } from 'lucide-react';
 import { UserProfile } from '../types';
 
 interface NavbarProps {
   user: UserProfile | null;
   onSignOut: () => void;
   onSignIn: () => void;
-  activeTab: 'editor' | 'history' | 'security';
-  setActiveTab: (tab: 'editor' | 'history' | 'security') => void;
+  activeTab: 'editor' | 'history' | 'map' | 'security' | 'admin';
+  setActiveTab: (tab: 'editor' | 'history' | 'map' | 'security' | 'admin') => void;
   entriesCount: number;
+  geotaggedCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -18,7 +19,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   entriesCount,
+  geotaggedCount = 0,
 }) => {
+  const isAdmin = user?.role === 'admin';
+
   return (
     <header className="sticky top-0 z-40 bg-stone-900 text-stone-100 border-b border-stone-800 backdrop-blur-md bg-opacity-95">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
@@ -67,6 +71,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('map')}
+              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                activeTab === 'map'
+                  ? 'bg-amber-500 text-stone-950 shadow-sm'
+                  : 'text-stone-300 hover:text-white'
+              }`}
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              <span>Memories Map</span>
+              {geotaggedCount > 0 && (
+                <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] px-1.5 py-0.2 rounded-full">
+                  {geotaggedCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('security')}
               className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ${
                 activeTab === 'security'
@@ -77,6 +98,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Security &amp; Rules</span>
             </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                  activeTab === 'admin'
+                    ? 'bg-purple-600 text-white shadow-sm font-bold'
+                    : 'text-purple-300 hover:text-white bg-purple-950/40 border border-purple-800/50'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5 text-purple-400" />
+                <span>Admin Console</span>
+              </button>
+            )}
           </nav>
         )}
 
@@ -98,14 +133,22 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
                 )}
                 <div className="text-left">
-                  <p className="text-xs font-semibold text-stone-200 leading-tight">
-                    {user.displayName || 'Authenticated User'}
-                  </p>
+                  <div className="flex items-center gap-1.5 leading-tight">
+                    <p className="text-xs font-semibold text-stone-200">
+                      {user.displayName || 'Authenticated User'}
+                    </p>
+                    {user.role === 'admin' && (
+                      <span className="bg-purple-900/80 text-purple-300 border border-purple-700/60 text-[9px] px-1 py-0.2 rounded font-mono font-bold">
+                        ADMIN
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-stone-400 leading-tight truncate max-w-[120px]">
                     {user.email || 'Google Auth'}
                   </p>
                 </div>
               </div>
+
 
               <button
                 type="button"

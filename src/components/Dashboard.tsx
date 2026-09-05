@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from './Navbar';
 import { ActiveSession } from './ActiveSession';
 import { EntryHistory } from './EntryHistory';
+import { MemoriesMap } from './MemoriesMap';
+import { AdminDashboard } from './AdminDashboard';
 import { SecurityBadge } from './SecurityBadge';
 import { ToastContainer, ToastMessage } from './Toast';
 import { UserProfile, JournalEntry } from '../types';
@@ -18,10 +20,13 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
-  const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'security'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'map' | 'security' | 'admin'>('editor');
   const [entries, setEntries] = useState<JournalEntry[]>([]);
+
   const [activeEntry, setActiveEntry] = useState<JournalEntry | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const geotaggedCount = entries.filter((e) => Boolean(e.location?.lat && e.location?.lng)).length;
 
   const addToast = (
     type: 'success' | 'error' | 'info',
@@ -103,38 +108,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         entriesCount={entries.length}
+        geotaggedCount={geotaggedCount}
       />
 
       {/* Main Content Body */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8">
         {/* Mobile Navigation Pills */}
-        <div className="flex md:hidden items-center justify-center gap-1.5 mb-6 bg-white p-1 rounded-xl border border-stone-200 text-xs font-semibold">
+        <div className="flex md:hidden items-center justify-center gap-1 mb-6 bg-white p-1 rounded-xl border border-stone-200 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setActiveTab('editor')}
-            className={`flex-1 py-2 rounded-lg transition ${
+            className={`flex-1 py-2 rounded-lg transition text-center ${
               activeTab === 'editor'
                 ? 'bg-amber-500 text-stone-950 font-bold'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
           >
-            New Reflection
+            New
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('history')}
-            className={`flex-1 py-2 rounded-lg transition flex items-center justify-center gap-1 ${
+            className={`flex-1 py-2 rounded-lg transition text-center ${
               activeTab === 'history'
                 ? 'bg-amber-500 text-stone-950 font-bold'
                 : 'text-stone-600 hover:bg-stone-50'
             }`}
           >
-            <span>History ({entries.length})</span>
+            Entries ({entries.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('map')}
+            className={`flex-1 py-2 rounded-lg transition text-center ${
+              activeTab === 'map'
+                ? 'bg-amber-500 text-stone-950 font-bold'
+                : 'text-stone-600 hover:bg-stone-50'
+            }`}
+          >
+            Map ({geotaggedCount})
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('security')}
-            className={`flex-1 py-2 rounded-lg transition ${
+            className={`flex-1 py-2 rounded-lg transition text-center ${
               activeTab === 'security'
                 ? 'bg-amber-500 text-stone-950 font-bold'
                 : 'text-stone-600 hover:bg-stone-50'
@@ -164,10 +181,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
             onSelectEntry={handleSelectEntry}
             onDeleteEntry={handleDeleteEntry}
             onNewEntry={handleNewEntry}
+            onViewMap={() => setActiveTab('map')}
           />
         )}
 
-        {/* Tab 3: Security & Architecture Breakdown */}
+        {/* Tab 3: Memories Map */}
+        {activeTab === 'map' && (
+          <MemoriesMap
+            entries={entries}
+            onSelectEntry={handleSelectEntry}
+            onNewEntry={handleNewEntry}
+          />
+        )}
+
+        {/* Tab 4: Security & Architecture Breakdown */}
         {activeTab === 'security' && (
           <div className="space-y-6">
             <SecurityBadge />
@@ -176,17 +203,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onSignOut }) => {
             <div className="bg-white p-6 sm:p-8 rounded-2xl border border-stone-200 shadow-sm space-y-4">
               <div className="flex items-center gap-2">
                 <FileCode className="w-5 h-5 text-amber-700" />
-                <h3 className="font-bold text-stone-900 text-base">Active Firestore Security Rules</h3>
+                <h3 className="font-bold text-stone-900 text-base">Active Firestore Security Rules (RBAC &amp; Owner-Bound)</h3>
               </div>
               <p className="text-stone-600 text-xs leading-relaxed">
-                Rules guarantee that only the owner of the user document tree (<code className="bg-stone-100 px-1 py-0.5 rounded font-mono text-stone-800">request.auth.uid == userId</code>) can read or write documents.
+                Rules guarantee that only the owner (<code className="bg-stone-100 px-1 py-0.5 rounded font-mono text-stone-800">request.auth.uid == userId</code>) or authorized administrators (<code className="bg-stone-100 px-1 py-0.5 rounded font-mono text-stone-800">isAdmin()</code> dynamic document lookup) can read or modify records, with strict privilege elevation guards and immutable audit trails.
               </p>
               <pre className="bg-stone-900 text-amber-300 font-mono text-xs p-4 rounded-xl overflow-x-auto border border-stone-800 leading-relaxed">
 {`rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function isAuthenticated() { return request.auth != null; }
+    function isOwner(userId) { return isAuthenticated() && request.auth.uid == userId; }
+    function getUserData(userId) { return get(/databases/$(database)/documents/users/$(userId)).data; }
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         getUserData(request.auth.uid).role in ['admin', 'superadmin']) ||
+        (request.auth.token.email != null && request.auth.token.email == 'krishnaraddi@gmail.com')
+      );
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))) || isAdmin();
+      allow delete: if isAdmin();
+
+      match /entries/{entryId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      match /interactions/{interactionId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /admin_audit_logs/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false; // Immutable audit log
     }
   }
 }`}
@@ -227,6 +280,17 @@ service cloud.firestore {
             </div>
           </div>
         )}
+
+        {/* Tab 5: Administrator Console (RBAC) */}
+        {activeTab === 'admin' && (
+          <AdminDashboard
+            currentUser={user}
+            entries={entries}
+            addToast={addToast}
+            onBackToEditor={() => setActiveTab('editor')}
+          />
+        )}
+
       </main>
 
       {/* Footer */}

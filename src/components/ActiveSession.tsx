@@ -18,8 +18,9 @@ import {
   Layers,
   ArrowUpRight,
 } from 'lucide-react';
-import { JournalEntry, ReflectionMode, ChatMessage } from '../types';
+import { JournalEntry, ReflectionMode, ChatMessage, EntryLocation } from '../types';
 import { requestGeminiReflection } from '../services/geminiService';
+import { LocationPicker } from './LocationPicker';
 
 interface ActiveSessionProps {
   userId: string;
@@ -80,6 +81,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
   const [mood, setMood] = useState<string>(activeEntry?.mood || 'Reflective');
   const [tags, setTags] = useState<string[]>(activeEntry?.tags || ['reflection']);
   const [tagInput, setTagInput] = useState('');
+  const [location, setLocation] = useState<EntryLocation | undefined>(activeEntry?.location);
   const [aiResponse, setAiResponse] = useState<string>(activeEntry?.aiResponse || '');
   const [modelUsed, setModelUsed] = useState<string>(activeEntry?.modelUsed || '');
   const [conversation, setConversation] = useState<ChatMessage[]>(activeEntry?.conversation || []);
@@ -99,6 +101,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
       setMode(activeEntry.mode || 'reflection');
       setMood(activeEntry.mood || 'Reflective');
       setTags(activeEntry.tags || []);
+      setLocation(activeEntry.location || undefined);
       setAiResponse(activeEntry.aiResponse || '');
       setModelUsed(activeEntry.modelUsed || '');
       setConversation(activeEntry.conversation || []);
@@ -109,6 +112,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
       setMode('reflection');
       setMood('Reflective');
       setTags(['reflection']);
+      setLocation(undefined);
       setAiResponse('');
       setModelUsed('');
       setConversation([]);
@@ -134,6 +138,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
         mode,
         mood,
         tags,
+        location,
         aiResponse,
         modelUsed,
         conversation,
@@ -170,6 +175,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
         title: title.trim() || 'Untitled Reflection',
         entryContent: content,
         mode,
+        location,
       });
 
       setAiResponse(result.reflection);
@@ -183,6 +189,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
         mode,
         mood,
         tags,
+        location,
         aiResponse: result.reflection,
         modelUsed: result.modelUsed,
         conversation,
@@ -223,6 +230,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
         mode: 'chat',
         conversation: updatedConversation.map((m) => ({ role: m.role, content: m.content })),
         customPrompt: userMessage.content,
+        location,
       });
 
       const modelMessage: ChatMessage = {
@@ -243,6 +251,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
         mode,
         mood,
         tags,
+        location,
         aiResponse,
         modelUsed: result.modelUsed,
         conversation: finalConversation,
@@ -420,6 +429,16 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
           </div>
         </div>
 
+        {/* Google Maps Location Context */}
+        <LocationPicker
+          location={location}
+          onChange={(newLoc) => {
+            setLocation(newLoc);
+            setSaveStatus('idle');
+          }}
+          addToast={addToast}
+        />
+
         {/* Journal Textarea */}
         <div className="relative">
           <textarea
@@ -517,9 +536,14 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({
                     </span>
                   )}
                 </h3>
-                <span className="text-[11px] text-stone-400">
-                  Mode: {REFLECTION_MODES.find((m) => m.mode === mode)?.label || mode}
-                </span>
+                <div className="flex items-center gap-2 flex-wrap text-[11px] text-stone-400">
+                  <span>Mode: {REFLECTION_MODES.find((m) => m.mode === mode)?.label || mode}</span>
+                  {location && (
+                    <span className="text-amber-300 flex items-center gap-1 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-800/60">
+                      📍 {location.name || 'Location-Aware'}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

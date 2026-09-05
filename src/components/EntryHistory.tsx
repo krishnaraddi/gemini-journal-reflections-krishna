@@ -9,6 +9,7 @@ import {
   ArrowRight,
   BookOpen,
   Filter,
+  MapPin,
 } from 'lucide-react';
 import { JournalEntry, ReflectionMode } from '../types';
 
@@ -18,6 +19,7 @@ interface EntryHistoryProps {
   onSelectEntry: (entry: JournalEntry) => void;
   onDeleteEntry: (id: string) => Promise<void>;
   onNewEntry: () => void;
+  onViewMap?: () => void;
 }
 
 export const EntryHistory: React.FC<EntryHistoryProps> = ({
@@ -26,6 +28,7 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
   onSelectEntry,
   onDeleteEntry,
   onNewEntry,
+  onViewMap,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMode, setSelectedMode] = useState<string>('all');
@@ -67,14 +70,27 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={onNewEntry}
-            className="flex items-center justify-center gap-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white px-4 py-2.5 rounded-xl shadow transition"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Write New Reflection</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onViewMap && (
+              <button
+                type="button"
+                onClick={onViewMap}
+                className="flex items-center justify-center gap-1.5 text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-3.5 py-2.5 rounded-xl transition"
+              >
+                <MapPin className="w-3.5 h-3.5 text-amber-700" />
+                <span>Memories Map</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onNewEntry}
+              className="flex items-center justify-center gap-2 text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-white px-4 py-2.5 rounded-xl shadow transition"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Write New Reflection</span>
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -181,6 +197,14 @@ export const EntryHistory: React.FC<EntryHistoryProps> = ({
                   <h3 className="text-base font-bold text-stone-900 group-hover:text-amber-900 transition leading-snug mb-2">
                     {entry.title || 'Untitled Reflection'}
                   </h3>
+
+                  {/* Geotagged Location Badge if present */}
+                  {entry.location && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-amber-850 bg-amber-50/90 border border-amber-200/80 px-2 py-1 rounded-lg mb-2.5 font-medium">
+                      <MapPin className="w-3 h-3 text-amber-600 shrink-0" />
+                      <span className="truncate">{entry.location.name || entry.location.formattedAddress}</span>
+                    </div>
+                  )}
 
                   {/* Snippet of User Entry */}
                   <p className="text-stone-600 text-xs line-clamp-3 leading-relaxed mb-3">

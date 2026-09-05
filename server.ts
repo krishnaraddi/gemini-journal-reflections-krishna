@@ -34,12 +34,21 @@ interface ChatHistoryMessage {
   content: string;
 }
 
+interface LocationData {
+  lat: number;
+  lng: number;
+  name?: string;
+  formattedAddress?: string;
+  placeId?: string;
+}
+
 interface ReflectionRequestBody {
   title?: string;
   entryContent?: string;
   mode?: 'summary' | 'reflection' | 'brainstorm' | 'perspective' | 'chat';
   conversation?: ChatHistoryMessage[];
   customPrompt?: string;
+  location?: LocationData;
 }
 
 async function generateContentWithFallback(systemInstruction: string, contents: any[]) {
@@ -79,15 +88,121 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasMapsKey: Boolean(process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY),
     timestamp: new Date().toISOString(),
   });
+});
+
+// Google Maps Reverse Geocoding Proxy (Server-side to prevent CORS issues)
+app.post('/api/maps/reverse-geocode', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      res.status(400).json({ error: 'Valid latitude (-90 to 90) and longitude (-180 to 180) are required.' });
+      return;
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      // Graceful fallback when API key is not yet configured
+      res.json({
+        name: `Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+        formattedAddress: `Coordinates: ${lat.toFixed(5)}°, ${lng.toFixed(5)}°`,
+        lat,
+        lng,
+        isFallback: true,
+      });
+      return;
+    }
+
+    const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
+    const response = await fetch(geocodeUrl);
+    const data = await response.json();
+
+    if (data.status === 'OK' && data.results && data.results.length > 0) {
+      const topResult = data.results[0];
+      let locationName = topResult.formatted_address;
+
+      // Try finding locality or neighborhood for a concise name
+      for (const comp of topResult.address_components || []) {
+        if (comp.types.includes('locality') || comp.types.includes('sublocality') || comp.types.includes('neighborhood')) {
+          locationName = comp.long_name;
+          break;
+        }
+      }
+
+      res.json({
+        name: locationName,
+        formattedAddress: topResult.formatted_address,
+        placeId: topResult.place_id,
+        lat,
+        lng,
+        isFallback: false,
+      });
+    } else {
+      res.json({
+        name: `Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+        formattedAddress: `Coordinates: ${lat.toFixed(5)}°, ${lng.toFixed(5)}°`,
+        lat,
+        lng,
+        isFallback: true,
+        apiStatus: data.status,
+      });
+    }
+  } catch (error: any) {
+    console.error('Reverse geocode error:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to reverse geocode location.',
+    });
+  }
+});
+
+// Google Maps Search Proxy (Text Search / Geocoding by Query)
+app.post('/api/maps/search', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const query = typeof body.query === 'string' ? body.query.trim() : '';
+
+    if (!query) {
+      res.status(400).json({ error: 'Search query is required.' });
+      return;
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      res.status(400).json({ error: 'Google Maps API key is not configured.' });
+      return;
+    }
+
+    const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey}`;
+    const response = await fetch(geocodeUrl);
+    const data = await response.json();
+
+    if (data.status === 'OK' && data.results && data.results.length > 0) {
+      const results = data.results.slice(0, 5).map((r: any) => ({
+        formattedAddress: r.formatted_address,
+        lat: r.geometry.location.lat,
+        lng: r.geometry.location.lng,
+        placeId: r.place_id,
+      }));
+      res.json({ results });
+    } else {
+      res.json({ results: [], status: data.status });
+    }
+  } catch (error: any) {
+    console.error('Maps search error:', error);
+    res.status(500).json({ error: error?.message || 'Failed to search places.' });
+  }
 });
 
 // AI Reflection & Multi-turn Chat Endpoint
 app.post('/api/gemini/reflect', async (req: Request, res: Response) => {
   try {
     const body: ReflectionRequestBody = (req.body && typeof req.body === 'object') ? req.body : {};
-    const { title = 'Untitled Reflection', entryContent = '', mode = 'reflection', conversation = [], customPrompt = '' } = body;
+    const { title = 'Untitled Reflection', entryContent = '', mode = 'reflection', conversation = [], customPrompt = '', location } = body;
 
     if (!entryContent.trim() && conversation.length === 0 && !customPrompt.trim()) {
       res.status(400).json({ error: 'Journal entry content or conversational message is required.' });
@@ -166,6 +281,12 @@ Journal Entry Content:
 ${entryContent}
 """`;
         break;
+    }
+
+    // Append Physical Location Context if entry is location-aware
+    if (location && typeof location.lat === 'number' && typeof location.lng === 'number') {
+      const locLabel = location.name || location.formattedAddress || `Coordinates (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)})`;
+      userInstructionPrompt += `\n\n**Physical Location & Environmental Setting**:\nThis journal entry was captured at: "${locLabel}" (Lat: ${location.lat.toFixed(5)}, Lng: ${location.lng.toFixed(5)}).\nWhen fitting and natural, acknowledge how the writer's physical setting, journey, or geographical environment grounds or influences their state of mind.`;
     }
 
     // Build the contents array
